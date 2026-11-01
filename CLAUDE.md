@@ -1,0 +1,87 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+@AGENTS.md
+
+## After completing any change
+
+Run `npm run typecheck` before you finish. Keep `.env.example` in step with any new
+environment variable the code reads.
+
+## Commands
+
+```bash
+npm run dev        # Start Next.js + eve dev server
+npm run build      # Production build
+npm run typecheck  # TypeScript check (tsc --noEmit)
+```
+
+There is no test runner configured. Use `npm run typecheck` to validate TypeScript.
+
+## Architecture
+
+**Cael** is a personal life-agent app: a Next.js 16 web UI backed by an eve agent that persists data to Neon Postgres.
+
+### eve framework
+
+The project uses the [eve](https://eve.dev/docs) agent framework. Docs are at `node_modules/eve/docs/`. Key patterns:
+
+- **Agent entry**: `agent/agent.ts` — defines the model via `defineAgent()`.
+- **Tools**: `agent/tools/*.ts` — each file exports a `defineTool()` default. Tools use Zod schemas and execute against the DB. Add a new tool by creating a file here; eve auto-discovers it.
+- **Channel**: `agent/channels/eve.ts` — configures the eve transport and auth. Uses `vercelOidc()` for production and `localDev()` / `placeholderAuth()` for local dev.
+- **Instructions**: `agent/instructions.md` — the agent system prompt.
+
+The Next.js config wraps with `withEve()` in `next.config.ts`, which registers the eve routes alongside the Next.js app.
+
+### Web UI
+
+- `app/page.tsx` — responsive layout: `<Dashboard>` (sidebar on desktop; full-screen panel on mobile via bottom nav) + `<AgentChat>` (main panel). Client component — manages `mobileTab` state and renders the bottom nav bar on mobile.
+- `app/_components/agent-chat.tsx` — connects to the agent via `useEveAgent()` (eve's React hook).
+- `app/_components/dashboard.tsx` — fetches from the REST API routes to show todos/thoughts.
+- `app/api/thoughts/route.ts`, `app/api/todos/route.ts` — Next.js route handlers that read from Neon Postgres directly (bypassing the agent).
+- `components/ai-elements/` — reusable streaming UI primitives (messages, tool calls, reasoning, etc.).
+- `components/ui/` — shadcn/ui base components.
+
+### Database
+
+`lib/db.ts` exports `getDb()` (Neon serverless client) and `ensureSchema()` which creates two tables:
+
+- `thoughts(id, content, tags[], created_at)`
+- `todos(id, title, completed, priority, due_date, created_at, completed_at)`
+
+Requires `DATABASE_URL` env var. On first run, call `ensureSchema()` or run the SQL manually.
+
+### Env vars
+
+- `DATABASE_URL` — Neon Postgres connection string (required for agent tools and API routes).
+- Eve-specific vars are pulled via `vercel env pull` or set in `.env.local`.
+- `BASIC_AUTH_PASSWORD` — protects the app (cookie-based login page at `/login`). Set in `.env.local` and Vercel production.
+- `ELEVEN_LABS_API_KEY` — ElevenLabs API key for Cael's voice (podcast skill, and the
+  "ElevenLabs" option in the chat's voice menu). Optional `ELEVEN_LABS_VOICE_ID` /
+  `ELEVEN_LABS_MODEL` override River / `eleven_flash_v2_5`.
+- `DEEPINFRA_API_KEY` — turns on the "Kokoro" voice in the chat (open-weights Kokoro-82M
+  via DeepInfra's OpenAI-compatible `/audio/speech`; a small fraction of ElevenLabs'
+  price). `KOKORO_API_URL` / `KOKORO_API_KEY` / `KOKORO_MODEL` / `KOKORO_VOICE` point the
+  same code at any OpenAI-compatible TTS server (self-hosted Kokoro-FastAPI, OpenAI).
+  With neither key the chat still speaks, using the device's own voice for free.
+- The daily scorecard's steps and sleep come from the watch via the **Google Health
+  API**, on the *existing* `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — there is no
+  separate Fitbit app or secret. (The legacy Fitbit Web API is turned down in September
+  2026; its successor authenticates with Google OAuth.) It needs, one time: the Google
+  Health API enabled in the same Cloud project, the two `googlehealth.*.readonly` scopes
+  added on the OAuth consent screen, and a re-consent via `/api/google/connect` — the
+  stored refresh token only carries the scopes it was granted, which is why
+  `hasHealthScope()` gates the UI. Without it the scorecard still works; steps and sleep
+  are just typed or told to Cael.
+- `MCP_TOKEN` — shared secret for the MCP server at `/api/mcp`, which exposes the task
+  list **and every tool in `agent/tools/`** (bridged via `lib/agent-tool-registry.ts`) to
+  any MCP client — Claude Code, claude.ai, the desktop app, Codex. Clients send it as
+  `Authorization: Bearer <token>`. Must be set in `.env.local` **and** in Vercel
+  production, or the endpoint 401s. Connect with:
+  - Claude Code: `claude mcp add --transport http --scope user cael https://<your-cael-host>/api/mcp --header "Authorization: Bearer $MCP_TOKEN"`
+  - Codex: `codex mcp add cael --url https://<your-cael-host>/api/mcp --bearer-token-env-var CAEL_MCP_TOKEN` (with `CAEL_MCP_TOKEN` exported in the shell)
+  - Adding a tool file to `agent/tools/` exposes it over MCP automatically; add its name
+    to `SKIPPED_AGENT_TOOLS` in `app/api/mcp/route.ts` only if it duplicates a task tool
+    or needs eve session state. Relative imports inside `agent/` must be extensionless
+    (no `.js`) — Turbopack can't remap `.js` → `.ts` and the MCP route bundles them.

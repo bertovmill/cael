@@ -1,0 +1,36 @@
+// X limits and pay-per-use prices shared by the server (lib/x-api.ts) and the
+// Writing page's tweet composer. Kept free of server imports so the client can use it.
+
+export const TWEET_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+export const TWEET_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+export const TWEET_MAX_IMAGES = 4;
+
+// Prices in USD, from docs.x.com/x-api/getting-started/pricing.
+export const X_POST_COST = 0.015;
+/** A post with a link in it costs far more than a plain one. */
+export const X_POST_WITH_LINK_COST = 0.2;
+
+/** Reading a tweet (e.g. to refresh its stats) is billed per tweet returned. */
+export const X_POST_READ_COST = 0.005;
+/** Most tweet ids one lookup request takes. */
+export const X_LOOKUP_MAX_IDS = 100;
+
+export function hasLink(text: string): boolean {
+  return /https?:\/\/\S+/.test(text);
+}
+
+export function estimateTweetCost(text: string): number {
+  return hasLink(text) ? X_POST_WITH_LINK_COST : X_POST_COST;
+}
+
+export function formatUsd(n: number): string {
+  return n < 1 ? `$${n.toFixed(3).replace(/0$/, "")}` : `$${n.toFixed(2)}`;
+}
+
+/** The owner's own X handle (NEXT_PUBLIC_X_HANDLE, without the @), posted to with the env tokens. Others are connected on the Writing page. */
+export const PERSONAL_X_HANDLE = (process.env.NEXT_PUBLIC_X_HANDLE ?? "").trim().replace(/^@/, "").toLowerCase();
+
+/** "@SomeHandle" → "somehandle": how handles are stored and compared. */
+export function normalizeHandle(handle: string): string {
+  return handle.trim().replace(/^@/, "").toLowerCase();
+}
